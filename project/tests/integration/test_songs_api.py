@@ -4,21 +4,25 @@ Chạy với PostgreSQL thật (service 'db' trong docker-compose).
 Không dùng mock – test toàn bộ luồng HTTP → FastAPI → SQLModel → PostgreSQL.
 """
 import asyncio
+import os
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.main import app
-from app.db import engine
 
 
 # =============================================================
-# Event Loop – phải là session-scoped để dùng chung với fixtures
-# session-scoped khác (pytest-asyncio 0.21.x yêu cầu)
+# Event Loop & Database Engine
 # =============================================================
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:Dev2024@db:5432/songs_db")
+engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
+
 
 @pytest.fixture(scope="session")
 def event_loop():
@@ -44,7 +48,7 @@ async def prepare_database():
 
 @pytest_asyncio.fixture(scope="session")
 async def client(prepare_database):
-    """Dùng chung một HTTP client cho cả session (hiệu quả hơn)."""
+    """HTTP client với lifespan kích hoạt."""
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test"
@@ -71,6 +75,14 @@ async def test_ping_returns_pong(client):
     response = await client.get("/ping")
     assert response.status_code == 200
     assert response.json() == {"ping": "pong!"}
+
+
+@pytest.mark.asyncio
+async def test_liveness(client):
+    """GET /health/live trả về ok."""
+    response = await client.get("/health/live")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 @pytest.mark.asyncio
@@ -113,11 +125,11 @@ async def test_get_songs_returns_list(client):
 
 @pytest.mark.asyncio
 async def test_create_song_success(client):
-    """POST /songs tạo bài hát mới thành công."""
+    """POST /songs tạo bài hát mới thành công (HTTP 201)."""
     payload = {"name": "Noi Nay Co Anh", "artist": "Son Tung MTP", "year": 2017}
     response = await client.post("/songs", json=payload)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert data["name"] == "Noi Nay Co Anh"
     assert data["artist"] == "Son Tung MTP"
@@ -128,11 +140,11 @@ async def test_create_song_success(client):
 
 @pytest.mark.asyncio
 async def test_create_song_without_year(client):
-    """POST /songs không có year (optional field) vẫn thành công."""
+    """POST /songs không có year (optional field) vẫn thành công (HTTP 201)."""
     payload = {"name": "Lac Troi", "artist": "Son Tung MTP"}
     response = await client.post("/songs", json=payload)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
     assert data["name"] == "Lac Troi"
     assert data["year"] is None
@@ -152,6 +164,8 @@ async def test_create_multiple_songs_have_unique_ids(client):
     r1 = await client.post("/songs", json={"name": "Song 1", "artist": "A", "year": 2001})
     r2 = await client.post("/songs", json={"name": "Song 2", "artist": "B", "year": 2002})
 
+    assert r1.status_code == 201
+    assert r2.status_code == 201
     assert r1.json()["id"] != r2.json()["id"]
 
 
@@ -160,19 +174,28 @@ async def test_create_multiple_songs_have_unique_ids(client):
 # =============================================================
 
 @pytest.mark.asyncio
-async def test_create_then_retrieve_song(client):
-    """Tạo bài hát → GET /songs → xác nhận dữ liệu khớp."""
+async def test_crud_full_flow(client):
+    """Tạo bài hát -> Get by ID -> Update -> Delete."""
     payload = {"name": "Chay Ngay Di", "artist": "Son Tung MTP", "year": 2016}
     create_resp = await client.post("/songs", json=payload)
-    assert create_resp.status_code == 200
+    assert create_resp.status_code == 201
     created = create_resp.json()
+    song_id = created["id"]
 
-    list_resp = await client.get("/songs")
-    assert list_resp.status_code == 200
-    songs = list_resp.json()
+    # GET by ID
+    get_resp = await client.get(f"/songs/{song_id}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["name"] == "Chay Ngay Di"
 
-    found = next((s for s in songs if s["id"] == created["id"]), None)
-    assert found is not None
-    assert found["name"] == "Chay Ngay Di"
-    assert found["artist"] == "Son Tung MTP"
-    assert found["year"] == 2016
+    # UPDATE (PUT)
+    update_resp = await client.put(f"/songs/{song_id}", json={"name": "Chay Ngay Di Remix", "artist": "Son Tung MTP", "year": 2018})
+    assert update_resp.status_code == 200
+    assert update_resp.json()["name"] == "Chay Ngay Di Remix"
+
+    # DELETE
+    del_resp = await client.delete(f"/songs/{song_id}")
+    assert del_resp.status_code == 204
+
+    # GET lại -> 404
+    get_again = await client.get(f"/songs/{song_id}")
+    assert get_again.status_code == 404
