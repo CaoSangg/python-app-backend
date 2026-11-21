@@ -1,22 +1,27 @@
-# pull official base image
-FROM python:3.11-slim-buster
+# ── Base image: Python 3.12 trên Debian Bookworm (LTS, không EOL) ──
+FROM python:3.12-slim-bookworm
 
-# set working directory
+# Tránh tạo .pyc và buffer stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /usr/src/app
 
-# set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-
-# install system dependencies
+# gcc + libpq-dev: cần để compile asyncpg (PostgreSQL async driver)
 RUN apt-get update \
-  && apt-get -y install netcat gcc postgresql \
-  && apt-get clean
+    && apt-get install -y --no-install-recommends gcc libpq-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# install python dependencies
-RUN pip install --upgrade pip
-COPY ./requirements.txt .
-RUN pip install -r requirements.txt
+# Cài Python dependencies trước (tận dụng Docker layer cache)
+COPY requirements.txt .
+RUN pip install --upgrade pip \
+    && pip install -r requirements.txt
 
-# add app
+# Copy toàn bộ source code
 COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
