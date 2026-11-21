@@ -60,13 +60,16 @@ cp .env.example .env
 ### Bước 3 – Build và khởi động
 
 ```bash
-# Build image (lần đầu ~2-3 phút)
-docker compose build --no-cache
+# Build image
+docker compose build
 
-# Khởi động tất cả services
+# Khởi động tất cả services (PostgreSQL -> Migrate -> FastAPI)
 docker compose up -d
 
-# Kiểm tra trạng thái (songs_db phải là "healthy")
+# Kiểm tra trạng thái:
+# - songs_db: Up (healthy)
+# - songs_migration: Exited (0) (chạy xong alembic upgrade head)
+# - songs_api: Up (chỉ khởi động sau khi migration hoàn tất thành công)
 docker compose ps
 ```
 

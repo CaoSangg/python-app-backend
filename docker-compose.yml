@@ -28,6 +28,23 @@ services:
       retries: 5
       start_period: 10s
 
+  # ── Database Migration Runner (Alembic) ───────────────────
+  migrate:
+    build:
+      context: ./project
+      dockerfile: Dockerfile
+      target: runtime          # dùng chung image với web
+    container_name: songs_migration
+    restart: "no"              # chỉ chạy 1 lần khi khởi động
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    command: alembic upgrade head
+    depends_on:
+      db:
+        condition: service_healthy
+
   # ── FastAPI Application (multi-stage, non-root) ───────────
   web:
     build:
@@ -53,6 +70,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   # ── Test Runner (Unit & Integration Tests) ────────────────
   test:
