@@ -53,9 +53,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # user không cần set ở đây vì Dockerfile đã USER appuser
 
-  # ── Integration Test Runner ───────────────────────────────
+  # ── Test Runner (Unit & Integration Tests) ────────────────
   test:
     build:
       context: ./project
@@ -66,18 +65,20 @@ services:
       - .env
     environment:
       DATABASE_URL: ${TEST_DATABASE_URL:-${DATABASE_URL}}
+      COVERAGE_FILE: /tmp/.coverage
+    working_dir: /build
     volumes:
-      - ./project:/usr/src/app
+      - ./project:/build:ro     # bind mount source & tests read-only
     depends_on:
       db:
         condition: service_healthy
     command: >
-      python -m pytest tests/integration/
+      python -m pytest tests/
         -v
         --tb=short
         --cov=app
         --cov-report=term-missing
-        --cov-report=xml:/usr/src/app/coverage.xml
         --cov-fail-under=80
+        -o cache_dir=/tmp/.pytest_cache
     profiles:
-      - test                    # chỉ chạy khi: docker compose --profile test up test
+      - test                    # chạy khi: docker compose --profile test run --rm test

@@ -3,65 +3,59 @@ Integration Tests – Song Management API
 Chạy với PostgreSQL thật (service 'db' trong docker-compose).
 Không dùng mock – test toàn bộ luồng HTTP → FastAPI → SQLModel → PostgreSQL.
 """
-import asyncio
 import os
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.main import app
-
-
-# =============================================================
-# Event Loop & Database Engine
-# =============================================================
+from app.models import Song
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:Dev2024@db:5432/songs_db")
-engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Override event_loop thành session-scoped."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 # =============================================================
-# Fixtures
+# Database Fixtures
 # =============================================================
 
-@pytest_asyncio.fixture(scope="session")
-async def prepare_database():
-    """Tạo bảng một lần cho cả session, xóa sau khi tất cả test xong."""
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def init_test_db():
+    """Tạo bảng cơ sở dữ liệu một lần cho toàn bộ session."""
+    engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    await engine.dispose()
     yield
-    async with engine.begin() as conn:
+    cleanup_engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
+    async with cleanup_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
+    await cleanup_engine.dispose()
 
 
-@pytest_asyncio.fixture(scope="session")
-async def client(prepare_database):
-    """HTTP client với lifespan kích hoạt."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test"
-    ) as ac:
-        yield ac
+@pytest_asyncio.fixture
+async def client():
+    """HTTP client riêng cho từng test với lifespan context trong cùng event loop."""
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test"
+        ) as ac:
+            yield ac
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def clean_songs_table(prepare_database):
-    """Xóa toàn bộ dữ liệu bảng song trước mỗi test để độc lập."""
+async def clean_songs_table():
+    """Xóa dữ liệu bảng song trước mỗi test bằng NullPool engine."""
+    engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
     async with AsyncSession(engine) as session:
-        await session.execute(text("DELETE FROM song"))
+        await session.exec(text("DELETE FROM song"))
         await session.commit()
+    await engine.dispose()
     yield
 
 
@@ -81,6 +75,14 @@ async def test_ping_returns_pong(client):
 async def test_liveness(client):
     """GET /health/live trả về ok."""
     response = await client.get("/health/live")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_readiness(client):
+    """GET /health/ready kiểm tra kết nối DB thật."""
+    response = await client.get("/health/ready")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
