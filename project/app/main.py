@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -5,7 +7,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.db import get_session, init_db
 from app.models import Song, SongCreate
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Khởi tạo DB table khi app start lần đầu."""
+    await init_db()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/ping")
