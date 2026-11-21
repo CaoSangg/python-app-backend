@@ -1,6 +1,6 @@
 """
 Integration Tests – Song Management API
-Chạy với PostgreSQL thật (service 'db' trong docker-compose).
+Chạy với PostgreSQL test riêng biệt (service 'db_test' / database 'songs_test_db').
 Không dùng mock – test toàn bộ luồng HTTP → FastAPI → SQLModel → PostgreSQL.
 """
 import os
@@ -16,16 +16,36 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.main import app
 from app.models import Song
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:Dev2024@db:5432/songs_db")
+# -------------------------------------------------------------
+# Configuration & Safety Guard
+# -------------------------------------------------------------
+DATABASE_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    pytest.skip("Neither TEST_DATABASE_URL nor DATABASE_URL configured", allow_module_level=True)
+
+# Parse database name from URL (e.g., .../songs_test_db -> songs_test_db)
+_parsed_db = DATABASE_URL.rstrip("/").split("/")[-1].split("?")[0]
+_app_db = os.getenv("POSTGRES_DB", "songs_db")
+
+# Safety Guard: Tuyệt đối không cho phép chạy integration tests trên application database
+if _parsed_db == _app_db or _parsed_db == "songs_db":
+    raise RuntimeError(
+        f"SAFETY GUARD TRIGGERED: Refusing to run destructive integration tests on "
+        f"application database '{_parsed_db}'. Integration tests must target an isolated "
+        f"test database (e.g., songs_test_db) via TEST_DATABASE_URL to protect production data."
+    )
+
+# Đồng bộ DATABASE_URL cho tiến trình FastAPI lifespan khi chạy test
+os.environ["DATABASE_URL"] = DATABASE_URL
 
 
 # =============================================================
-# Database Fixtures
+# Database Fixtures (Chỉ chạy trên database test)
 # =============================================================
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def init_test_db():
-    """Tạo bảng cơ sở dữ liệu một lần cho toàn bộ session."""
+    """Tạo bảng cơ sở dữ liệu một lần cho toàn bộ session trong test database."""
     engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
@@ -50,7 +70,7 @@ async def client():
 
 @pytest_asyncio.fixture(autouse=True)
 async def clean_songs_table():
-    """Xóa dữ liệu bảng song trước mỗi test bằng NullPool engine."""
+    """Xóa dữ liệu bảng song trong test database trước mỗi test để độc lập."""
     engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
     async with AsyncSession(engine) as session:
         await session.exec(text("DELETE FROM song"))
@@ -81,7 +101,7 @@ async def test_liveness(client):
 
 @pytest.mark.asyncio
 async def test_readiness(client):
-    """GET /health/ready kiểm tra kết nối DB thật."""
+    """GET /health/ready kiểm tra kết nối DB test thật."""
     response = await client.get("/health/ready")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -100,7 +120,7 @@ async def test_docs_accessible(client):
 
 @pytest.mark.asyncio
 async def test_get_songs_empty(client):
-    """GET /songs trả về [] khi DB trống."""
+    """GET /songs trả về [] khi DB test trống."""
     response = await client.get("/songs")
     assert response.status_code == 200
     assert response.json() == []
@@ -108,7 +128,7 @@ async def test_get_songs_empty(client):
 
 @pytest.mark.asyncio
 async def test_get_songs_returns_list(client):
-    """GET /songs trả về list sau khi có dữ liệu."""
+    """GET /songs trả về list sau khi có dữ liệu trong test DB."""
     await client.post("/songs", json={"name": "Song A", "artist": "Artist A", "year": 2020})
     await client.post("/songs", json={"name": "Song B", "artist": "Artist B", "year": 2021})
 

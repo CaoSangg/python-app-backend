@@ -100,48 +100,29 @@ docker compose down -v       # Xóa toàn bộ dữ liệu (volume)
 
 ---
 
-## Chạy Integration Tests
+## Chạy Tests (Unit & Integration Tests)
 
-Tests kết nối với **PostgreSQL thật** (không mock), kiểm tra toàn bộ luồng HTTP → API → DB.
+Hệ thống kiểm thử bao gồm **42 Unit Tests** (mock) và **11 Integration Tests** chạy trên **PostgreSQL test riêng biệt (`songs_test_db` trên service `db_test`)**, hoàn toàn cách ly với database ứng dụng (`songs_db`), có cơ chế Safety Guard chống xóa nhầm dữ liệu production.
 
-### Cách 1 – Chạy trong Docker (khuyến nghị)
+### Lệnh chạy tests (khuyến nghị qua Docker)
 
 ```bash
-# Đảm bảo DB đang chạy
-docker compose up -d db
-
-# Chạy test suite với coverage report
+# Khởi động test runner (tự động khởi động db_test cách ly)
 docker compose --profile test run --rm test
-```
-
-### Cách 2 – Chạy trực tiếp trong container web
-
-```bash
-# Exec vào container đang chạy
-docker compose exec web python -m pytest tests/integration/ \
-  -v \
-  --tb=short \
-  --cov=app \
-  --cov-report=term-missing \
-  --cov-fail-under=80
 ```
 
 ### Kết quả mong đợi
 
-```
-tests/integration/test_songs_api.py::test_ping_returns_pong          PASSED
-tests/integration/test_songs_api.py::test_docs_accessible            PASSED
-tests/integration/test_songs_api.py::test_get_songs_empty            PASSED
-tests/integration/test_songs_api.py::test_get_songs_returns_list     PASSED
-tests/integration/test_songs_api.py::test_create_song_success        PASSED
-tests/integration/test_songs_api.py::test_create_song_without_year   PASSED
-tests/integration/test_songs_api.py::test_create_multiple_songs_...  PASSED
-tests/integration/test_songs_api.py::test_create_then_retrieve_song  PASSED
+```text
+tests/integration/test_songs_api.py (11 integration tests) ........... PASSED
+tests/test_api.py (42 unit tests) .................................... PASSED
 
 ---------- coverage: app ----------
-TOTAL  coverage: 85%+
-
-8 passed in Xs
+app/__init__.py       100%
+app/db.py            100%
+app/main.py          100%
+app/models.py        100%
+TOTAL                100%
 ```
 
 ---
