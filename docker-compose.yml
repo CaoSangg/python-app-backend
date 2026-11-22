@@ -1,127 +1,89 @@
-version: "3.8"
-
 volumes:
   postgres_data:
-    driver: local
+
+networks:
+  test_db:
+    internal: true
 
 services:
-
-  # ── PostgreSQL 16 (Application Database) ──────────────────
   db:
     image: postgres:16-alpine
-    container_name: songs_db
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    expose:
-      - "5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 10
 
-  # ── Database Migration Runner (Alembic) ───────────────────
   migrate:
     build:
       context: ./project
-      dockerfile: Dockerfile
-      target: runtime          # dùng chung image với web
-    container_name: songs_migration
-    restart: "no"              # chỉ chạy 1 lần khi khởi động
-    env_file:
-      - .env
+      target: runtime
+    restart: "no"
     environment:
       DATABASE_URL: ${DATABASE_URL}
-    command: alembic upgrade head
+    command: ["alembic", "upgrade", "head"]
     depends_on:
       db:
         condition: service_healthy
 
-  # ── FastAPI Application (multi-stage, non-root) ───────────
   web:
     build:
       context: ./project
-      dockerfile: Dockerfile
-      target: runtime          # chỉ build tới stage "runtime"
-    container_name: songs_api
+      target: runtime
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
-    command: >
-      uvicorn app.main:app
-        --reload
-        --workers 1
-        --host 0.0.0.0
-        --port 8000
-    volumes:
-      - ./project:/usr/src/app  # hot-reload (dev only)
     ports:
-      - "8004:8000"
+      - "${APP_HOST_PORT:-8004}:8000"
     depends_on:
       db:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
 
-  # ── PostgreSQL 16 (Isolated Test Database) ────────────────
   db_test:
     image: postgres:16-alpine
-    container_name: songs_db_test
-    restart: unless-stopped
-    env_file:
-      - .env
+    command: ["postgres", "-c", "cluster_name=song_management_integration"]
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_TEST_DB:-songs_test_db}
-    expose:
-      - "5432"
+      POSTGRES_USER: songs_test_runner
+      POSTGRES_PASSWORD: ${POSTGRES_TEST_PASSWORD:-}
+      POSTGRES_DB: songs_test_db
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks: [test_db]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_TEST_DB:-songs_test_db}"]
-      interval: 5s
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "songs_test_runner", "-d", "songs_test_db"]
+      interval: 3s
       timeout: 3s
-      retries: 5
-      start_period: 5s
-    profiles:
-      - test                    # Chỉ chạy khi kiểm thử với profile test
+      retries: 10
+    profiles: [test]
 
-  # ── Test Runner (Unit & Integration Tests) ────────────────
   test:
     build:
       context: ./project
-      dockerfile: Dockerfile
-      target: builder           # dùng builder stage có đủ dev tools
-    container_name: songs_test
-    env_file:
-      - .env
+      target: test
     environment:
-      DATABASE_URL: ${TEST_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db_test:5432/${POSTGRES_TEST_DB:-songs_test_db}}
-      TEST_DATABASE_URL: ${TEST_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db_test:5432/${POSTGRES_TEST_DB:-songs_test_db}}
-      POSTGRES_DB: ${POSTGRES_DB}
+      TEST_DATABASE_URL: ${TEST_DATABASE_URL:-}
       COVERAGE_FILE: /tmp/.coverage
-    working_dir: /build
     volumes:
-      - ./project:/build:ro     # bind mount source & tests read-only
+      - ./project:/build:ro
+    networks: [test_db]
     depends_on:
       db_test:
         condition: service_healthy
     command: >
       python -m pytest tests/
-        -v
         --tb=short
         --cov=app
+        --cov-branch
         --cov-report=term-missing
         --cov-fail-under=80
-        -o cache_dir=/tmp/.pytest_cache
-    profiles:
-      - test                    # chạy khi: docker compose --profile test run --rm test
+        -p no:cacheprovider
+    profiles: [test]

@@ -7,59 +7,45 @@ import os
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import NullPool
+from httpx2 import AsyncClient, ASGITransport
 from sqlmodel import SQLModel, text
-from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app import db
 from app.main import app
 from app.models import Song
+from tests.integration.database import create_test_engine, require_test_database_url
 
 # -------------------------------------------------------------
 # Configuration & Safety Guard
 # -------------------------------------------------------------
-DATABASE_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    pytest.skip("Neither TEST_DATABASE_URL nor DATABASE_URL configured", allow_module_level=True)
-
-# Parse database name from URL (e.g., .../songs_test_db -> songs_test_db)
-_parsed_db = DATABASE_URL.rstrip("/").split("/")[-1].split("?")[0]
-_app_db = os.getenv("POSTGRES_DB", "songs_db")
-
-# Safety Guard: Tuyệt đối không cho phép chạy integration tests trên application database
-if _parsed_db == _app_db or _parsed_db == "songs_db":
-    raise RuntimeError(
-        f"SAFETY GUARD TRIGGERED: Refusing to run destructive integration tests on "
-        f"application database '{_parsed_db}'. Integration tests must target an isolated "
-        f"test database (e.g., songs_test_db) via TEST_DATABASE_URL to protect production data."
-    )
-
-# Đồng bộ DATABASE_URL cho tiến trình FastAPI lifespan khi chạy test
-os.environ["DATABASE_URL"] = DATABASE_URL
+TEST_DATABASE_URL = require_test_database_url(os.getenv("TEST_DATABASE_URL"))
 
 
 # =============================================================
 # Database Fixtures (Chỉ chạy trên database test)
 # =============================================================
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def init_test_db():
-    """Tạo bảng cơ sở dữ liệu một lần cho toàn bộ session trong test database."""
-    engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    await engine.dispose()
-    yield
-    cleanup_engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
-    async with cleanup_engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
-    await cleanup_engine.dispose()
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def test_schema():
+    """Tạo và dọn bảng một lần cho module trên PostgreSQL test đã xác minh."""
+    engine = create_test_engine(TEST_DATABASE_URL)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        try:
+            yield engine
+        finally:
+            async with engine.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.drop_all)
+    finally:
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture
-async def client():
+async def client(monkeypatch):
     """HTTP client riêng cho từng test với lifespan context trong cùng event loop."""
+    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL.render_as_string(hide_password=False))
+    monkeypatch.setattr(db, "create_async_engine", create_test_engine)
     async with app.router.lifespan_context(app):
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -69,14 +55,10 @@ async def client():
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def clean_songs_table():
+async def clean_songs_table(test_schema):
     """Xóa dữ liệu bảng song trong test database trước mỗi test để độc lập."""
-    engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
-    async with AsyncSession(engine) as session:
-        await session.exec(text("DELETE FROM song"))
-        await session.commit()
-    await engine.dispose()
-    yield
+    async with test_schema.begin() as connection:
+        await connection.execute(text("DELETE FROM song"))
 
 
 # =============================================================

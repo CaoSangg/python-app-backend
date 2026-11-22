@@ -1,231 +1,57 @@
 # Song Management API
 
-> **Đồ án DevOps – Phase 1** | FastAPI + PostgreSQL 16 + Docker
+API FastAPI quản lý bài hát, dùng Python 3.12 và PostgreSQL 16. Xem [tài liệu API](docs/api.md) để biết payload, mã lỗi và ví dụ.
 
-[![Python](https://img.shields.io/badge/Python-3.12-blue)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100-green)](https://fastapi.tiangolo.com)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)](https://postgresql.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+## Chạy bằng Docker Compose
 
-## Giới Thiệu
+Sử dụng Docker Engine hoặc Docker Desktop với Docker Compose v2. Từ thư mục gốc repository, tạo `.env` từ mẫu nếu chưa có:
 
-RESTful API quản lý danh sách bài hát (Song Management), xây dựng bằng:
-
-| Thành phần | Công nghệ |
-|---|---|
-| Web Framework | FastAPI 0.100 (async) |
-| ORM | SQLModel 0.0.8 (SQLAlchemy async) |
-| Database | PostgreSQL 16-alpine |
-| DB Driver | asyncpg 0.29.0 |
-| Migration | Alembic 1.11.1 |
-| Container | Docker + Docker Compose |
-
-**API Endpoints:**
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| `GET` | `/ping` | Healthcheck |
-| `GET` | `/songs` | Lấy danh sách bài hát |
-| `POST` | `/songs` | Thêm bài hát mới |
-| `GET` | `/docs` | Swagger UI |
-
----
-
-## Yêu Cầu Hệ Thống
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) >= 24.0
-- [Git](https://git-scm.com/) >= 2.40
-- (Optional) Python 3.12 để chạy test local
-
----
-
-## Setup & Chạy Local Bằng Docker Compose
-
-### Bước 1 – Clone repository
-
-```bash
-git clone <repo-url>
-cd python-app-backend
-```
-
-### Bước 2 – Tạo file `.env`
-
-```bash
+```sh
 cp .env.example .env
-# Mở .env và sửa password nếu cần
+docker compose up -d --build
+docker compose ps -a
 ```
 
-> ⚠️ **Không dùng ký tự `@`, `!`, `#` trong password** – sẽ gây lỗi parse DATABASE_URL.
+Trên PowerShell, dùng `Copy-Item .env.example .env`. Đổi mật khẩu mẫu trước khi chạy. Cập nhật `DATABASE_URL` cùng giá trị với `POSTGRES_USER`, `POSTGRES_PASSWORD` và `POSTGRES_DB`. Nếu `POSTGRES_PASSWORD` chứa ký tự dành riêng của URL, mã hóa phần mật khẩu trong DSN. Giữ cấu hình database ứng dụng đang dùng khi cập nhật `.env` cũ. Bổ sung cấu hình test từ `.env.example` nếu cần chạy profile `test`.
 
-### Bước 3 – Build và khởi động
+Compose đợi `db` healthy, chạy `migrate` với `alembic upgrade head`, rồi khởi động `web` khi migration thoát mã `0`. PostgreSQL ứng dụng lưu dữ liệu trong named volume `postgres_data`. `docker compose down` dừng stack và giữ volume. Dùng cùng tên Compose project để tái sử dụng volume hiện có.
 
-```bash
-# Build image
-docker compose build
+Web mặc định ở `http://localhost:8004`. Có thể đổi cổng host bằng `APP_HOST_PORT`. Compose chạy code đóng gói trong image, vì vậy dùng `docker compose up -d --build` sau khi thay đổi code. Runtime dùng UID/GID `10001`. Có thể xác nhận bằng `docker compose exec web id`.
 
-# Khởi động tất cả services (PostgreSQL -> Migrate -> FastAPI)
-docker compose up -d
+| Method | Endpoint | Kết quả |
+| --- | --- | --- |
+| `POST` | `/songs` | Tạo bài hát, HTTP `201`. |
+| `GET` | `/songs` | Liệt kê bài hát, HTTP `200`. |
+| `GET` | `/songs/{song_id}` | Đọc bài hát, HTTP `200` hoặc `404`. |
+| `PUT` | `/songs/{song_id}` | Thay thế bài hát, HTTP `200` hoặc `404`. |
+| `DELETE` | `/songs/{song_id}` | Xóa bài hát, HTTP `204` hoặc `404`. |
+| `GET` | `/ping` | Kiểm tra đơn giản, HTTP `200`. |
+| `GET` | `/health/live` | Liveness, HTTP `200`, không truy vấn DB. |
+| `GET` | `/health/ready` | Chạy `SELECT 1`, HTTP `200` hoặc `503`. |
+| `GET` | `/docs`, `/openapi.json` | Swagger UI và OpenAPI JSON. |
 
-# Kiểm tra trạng thái:
-# - songs_db: Up (healthy)
-# - songs_migration: Exited (0) (chạy xong alembic upgrade head)
-# - songs_api: Up (chỉ khởi động sau khi migration hoàn tất thành công)
-docker compose ps
+## Dependencies
+
+`project/requirements.txt` ghim FastAPI `0.135.1`, SQLModel `0.0.41`, SQLAlchemy `2.0.58`, asyncpg `0.31.0`, Alembic `1.20.1` và Uvicorn `0.22.0`. `project/requirements-test.txt` include dependencies production và thêm HTTPX2, Pytest, pytest-asyncio và pytest-cov. Docker target `runtime` đóng gói API và migrations. Target `test` cài bộ kiểm thử riêng.
+
+## Chạy kiểm thử
+
+Chạy toàn bộ unit tests và integration tests từ thư mục gốc:
+
+```sh
+docker compose --profile test run --rm --build test
 ```
 
-### Bước 4 – Kiểm tra API
+Đặt `POSTGRES_TEST_PASSWORD` và cập nhật cùng mật khẩu đã mã hóa URL trong `TEST_DATABASE_URL`. Compose chạy `db_test` trên mạng riêng cùng test runner. `db_test` dùng bộ nhớ tạm và role `songs_test_runner` trên database `songs_test_db`. Ứng dụng và runner dùng cấu hình kết nối riêng. Trước khi cấp một kết nối cho fixture hoặc API test, guard kiểm tra database, role và `cluster_name=song_management_integration` do PostgreSQL trả về. Integration tests yêu cầu `TEST_DATABASE_URL` và từ chối DSN có tham số ghi đè kết nối. Fixture được phép tạo bảng, xóa dữ liệu và dọn schema trên DB test này. Chạy từng test runner một lần trên mỗi Compose project vì fixture dùng chung bảng `song`.
 
-```bash
-# Healthcheck
-curl http://localhost:8004/ping
+Để chạy unit tests trên host với Python 3.12, tạo và kích hoạt virtualenv, sau đó chạy:
 
-# Lấy danh sách bài hát
-curl http://localhost:8004/songs
-
-# Thêm bài hát
-curl -X POST http://localhost:8004/songs \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Noi Nay Co Anh", "artist": "Son Tung MTP", "year": 2017}'
-
-# Swagger UI (mở trình duyệt)
-# http://localhost:8004/docs
+```sh
+cd project
+python -m pip install -r requirements-test.txt
+python -m pytest tests/test_api.py tests/test_database_isolation.py --cov=app --cov-branch --cov-fail-under=80
 ```
 
-### Dừng services
+## Nguồn và giấy phép
 
-```bash
-docker compose down          # Giữ nguyên dữ liệu (volume)
-docker compose down -v       # Xóa toàn bộ dữ liệu (volume)
-```
-
----
-
-## Chạy Tests (Unit & Integration Tests)
-
-Hệ thống kiểm thử bao gồm **42 Unit Tests** (mock) và **11 Integration Tests** chạy trên **PostgreSQL test riêng biệt (`songs_test_db` trên service `db_test`)**, hoàn toàn cách ly với database ứng dụng (`songs_db`), có cơ chế Safety Guard chống xóa nhầm dữ liệu production.
-
-### Lệnh chạy tests (khuyến nghị qua Docker)
-
-```bash
-# Khởi động test runner (tự động khởi động db_test cách ly)
-docker compose --profile test run --rm test
-```
-
-### Kết quả mong đợi
-
-```text
-tests/integration/test_songs_api.py (11 integration tests) ........... PASSED
-tests/test_api.py (42 unit tests) .................................... PASSED
-
----------- coverage: app ----------
-app/__init__.py       100%
-app/db.py            100%
-app/main.py          100%
-app/models.py        100%
-TOTAL                100%
-```
-
----
-
-## Kiểm Tra Bảo Mật Container (Non-Root)
-
-```bash
-# Xác nhận process chạy với UID 10001 (appuser)
-docker compose exec web id
-# uid=10001(appuser) gid=10001(appgroup)
-
-docker compose exec web whoami
-# appuser
-```
-
----
-
-## Kiểm Tra Data Persistence
-
-```bash
-# 1. Tạo dữ liệu
-curl -X POST http://localhost:8004/songs \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Test Persistence", "artist": "DevOps Team", "year": 2024}'
-
-# 2. Restart containers (KHÔNG xóa volume)
-docker compose restart
-
-# 3. Chờ DB healthy (~15s), kiểm tra dữ liệu vẫn còn
-sleep 15 && curl http://localhost:8004/songs
-# → Dữ liệu "Test Persistence" vẫn còn → Named Volume hoạt động ✅
-```
-
----
-
-## Cấu Trúc Dự Án
-
-```
-python-app-backend/
-├── .env.example              # Template biến môi trường
-├── .gitignore
-├── docker-compose.yml        # Orchestration: web + db + test
-├── LICENSE
-├── README.md
-└── project/
-    ├── .dockerignore
-    ├── Dockerfile            # Multi-stage, non-root UID 10001
-    ├── alembic.ini
-    ├── requirements.txt
-    ├── pytest.ini
-    ├── app/
-    │   ├── __init__.py
-    │   ├── db.py             # Database engine & session
-    │   ├── main.py           # FastAPI routes + lifespan
-    │   └── models.py         # SQLModel: Song, SongCreate
-    ├── migrations/
-    │   └── versions/         # Alembic migration files
-    └── tests/
-        └── integration/
-            └── test_songs_api.py  # Integration tests (pytest + httpx)
-```
-
----
-
-## Git Workflow
-
-```
-main (protected)
-  └── feature/phase1-docker   ← Thành viên 1: Infrastructure & Docker
-  └── feature/phase1-backend  ← Thành viên 2: Backend & Unit Tests
-```
-
-### Quy tắc commit message (Conventional Commits)
-
-```
-feat(scope):   tính năng mới
-fix(scope):    sửa lỗi
-docs(scope):   thay đổi tài liệu
-refactor:      cải thiện code không thêm feature
-test:          thêm hoặc sửa test
-chore:         cấu hình, build scripts
-```
-
-### Tạo Pull Request
-
-1. Push nhánh feature lên remote
-2. Tạo PR vào `main` trên GitHub
-3. PR description ghi rõ: thay đổi, test đã chạy, checklist nghiệm thu
-4. Review chéo giữa 2 thành viên trước khi merge
-5. Sau khi merge Phase 1: `git tag v1.0.0-phase1`
-
----
-
-## Nguồn Gốc & Giấy Phép
-
-Dự án này được phát triển dựa trên template mã nguồn mở:
-
-| Thành phần | Nguồn | Giấy phép |
-|---|---|---|
-| FastAPI framework | [tiangolo/fastapi](https://github.com/tiangolo/fastapi) | MIT |
-| SQLModel ORM | [tiangolo/sqlmodel](https://github.com/tiangolo/sqlmodel) | MIT |
-| asyncpg driver | [MagicStack/asyncpg](https://github.com/MagicStack/asyncpg) | Apache 2.0 |
-| Alembic migration | [sqlalchemy/alembic](https://github.com/sqlalchemy/alembic) | MIT |
-| Base template | [testdrivenio/fastapi-sqlmodel-alembic](https://github.com/testdrivenio/fastapi-sqlmodel-alembic) | MIT |
-
-Toàn bộ code trong repository này được phân phối theo **[Giấy phép MIT](LICENSE)**.
+Dự án dựa trên template FastAPI, SQLModel và Alembic của TestDriven.io. [Repository upstream](https://github.com/testdrivenio/fastapi-sqlmodel-alembic) · [Giấy phép MIT](LICENSE)
