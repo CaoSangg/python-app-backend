@@ -25,8 +25,14 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
+RUN pip install -r requirements.txt
+
+
+# ── Test runner: extends the builder venv for this target only ────
+FROM builder AS test
+
+COPY requirements-test.txt .
+RUN pip install -r requirements-test.txt
 
 
 # ── Stage 2: runtime ─────────────────────────────────────────
@@ -38,12 +44,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /usr/src/app
 
-# Chỉ cài libpq (runtime lib cho asyncpg/psycopg2), không cần gcc
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpq5 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copy virtualenv đã build từ stage 1
 COPY --from=builder /opt/venv /opt/venv
 
@@ -52,8 +52,10 @@ RUN groupadd --gid 10001 appgroup \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /bin/false appuser \
     && chown -R appuser:appgroup /usr/src/app
 
-# Copy source code
-COPY --chown=appuser:appgroup . .
+# Copy only the API and files needed by Alembic
+COPY --chown=appuser:appgroup app/ ./app/
+COPY --chown=appuser:appgroup migrations/ ./migrations/
+COPY --chown=appuser:appgroup alembic.ini .
 
 # Switch sang non-root user TRƯỚC khi expose/cmd
 USER appuser

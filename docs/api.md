@@ -74,7 +74,7 @@ Từ thư mục `project`:
 
 ```sh
 python -m pip install -r requirements-test.txt
-python -m pytest --cov=app --cov-branch --cov-report=term-missing --cov-fail-under=80
+python -m pytest tests/test_api.py tests/test_database_isolation.py --cov=app --cov-branch --cov-report=term-missing --cov-fail-under=80
 ```
 
-Unit tests mô phỏng engine và session để chạy độc lập với PostgreSQL. Nguồn upstream và tác giả được ghi nhận theo giấy phép đi kèm. [TestDriven.io](https://github.com/testdrivenio/fastapi-sqlmodel-alembic) · [LICENSE](../LICENSE)
+Unit tests mô phỏng engine và session để chạy độc lập với PostgreSQL. Để chạy cả integration tests với DB test riêng, xem [README](../README.md#chạy-kiểm-thử). Nguồn upstream và tác giả được ghi nhận theo giấy phép đi kèm. [TestDriven.io](https://github.com/testdrivenio/fastapi-sqlmodel-alembic) · [LICENSE](../LICENSE)
