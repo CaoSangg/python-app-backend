@@ -10,7 +10,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.db import DATABASE_ERRORS, get_session, lifespan
 from app.models import MAX_DB_INTEGER, Song, SongCreate, SongRead
 
-
 app = FastAPI(title="Song Management API", lifespan=lifespan)
 logger = logging.getLogger(__name__)
 
