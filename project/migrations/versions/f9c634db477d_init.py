@@ -22,12 +22,13 @@ def upgrade():
     op.create_table('song',
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('artist', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('id', sa.Integer(), nullable=True),
-    sa.PrimaryKeyConstraint('id')
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.PrimaryKeyConstraint('id'),
+    if_not_exists=True,
     )
-    op.create_index(op.f('ix_song_artist'), 'song', ['artist'], unique=False)
-    op.create_index(op.f('ix_song_id'), 'song', ['id'], unique=False)
-    op.create_index(op.f('ix_song_name'), 'song', ['name'], unique=False)
+    op.create_index(op.f('ix_song_artist'), 'song', ['artist'], unique=False, if_not_exists=True)
+    op.create_index(op.f('ix_song_id'), 'song', ['id'], unique=False, if_not_exists=True)
+    op.create_index(op.f('ix_song_name'), 'song', ['name'], unique=False, if_not_exists=True)
     # ### end Alembic commands ###
 
 

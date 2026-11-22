@@ -1,2 +1,48 @@
-.dockerignore
-Dockerfile
+# =============================================================
+# .dockerignore – loại trừ file không cần trong Docker build context
+# Giảm build context size và tránh leak secrets
+# =============================================================
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test & coverage artifacts
+tests/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Secrets (KHÔNG bao giờ đưa vào image)
+.env
+*.env
+!.env.example
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docs
+*.md
+LICENSE
+
+# Alembic (migrations chạy riêng, không cần trong image runtime)
+# migrations/   ← bỏ comment nếu không dùng Alembic trong container

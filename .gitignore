@@ -1,2 +1,13 @@
 __pycache__
 env
+
+# Secrets - never commit
+.env
+*.env
+!.env.example
+
+# Test & coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
