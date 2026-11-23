@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: song-api
+  namespace: "$namespace"
+  labels:
+    app.kubernetes.io/name: song-management
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: song-management
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: song-management
+        app.kubernetes.io/component: api
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        "$worker_key": "$worker_value"
+      imagePullSecrets:
+        - name: harbor-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: "$image"
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: song-db-app
+                  key: DATABASE_URL
+            - name: PGSSLMODE
+              value: verify-full
+            - name: PGSSLROOTCERT
+              value: /etc/rds-ca/ca-bundle.pem
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/rds-ca
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: rds-ca
+            items:
+              - key: ca-bundle.pem
+                path: ca-bundle.pem
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: song-api
+  namespace: "$namespace"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: song-management
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: song-api
+  namespace: "$namespace"
+spec:
+  ingressClassName: "$ingress_class"
+  tls:
+    - hosts: ["$host"]
+      secretName: "$tls_secret"
+  rules:
+    - host: "$host"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: song-api
+                port:
+                  name: http
